@@ -4,6 +4,7 @@ import com.google.common.base.Strings;
 import com.maxmind.geoip2.DatabaseReader;
 import com.maxmind.geoip2.exception.GeoIp2Exception;
 import com.maxmind.geoip2.model.CityResponse;
+import org.apache.commons.collections4.CollectionUtils;
 import org.baeldung.persistence.dao.DeviceMetadataRepository;
 import org.baeldung.persistence.model.DeviceMetadata;
 import org.baeldung.persistence.model.User;
@@ -20,30 +21,47 @@ import ua_parser.Parser;
 import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.*;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 
 import static java.util.Objects.nonNull;
 
 @Component
 public class DeviceService {
-    private final Logger logger = LoggerFactory.getLogger(getClass());
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DeviceService.class);
 
     private static final String UNKNOWN = "UNKNOWN";
 
-    @Value("${support.email}")
-    private String from;
+    private final String from;
 
-    private DeviceMetadataRepository deviceMetadataRepository;
-    private DatabaseReader databaseReader;
-    private Parser parser;
-    private JavaMailSender mailSender;
-    private MessageSource messages;
+    private final DatabaseReader databaseReader;
 
-    public DeviceService(DeviceMetadataRepository deviceMetadataRepository,
+    private final DeviceMetadataRepository deviceMetadataRepository;
+
+    private final JavaMailSender mailSender;
+
+    private final MessageSource messages;
+
+    private final Parser parser;
+
+    private final boolean sendNewLoginNotification;
+
+    private final List<String> unknownLocationIpAdresses;
+
+    public DeviceService(@Value("#{'${device-service.unknown-location-ip-adresses}'.split(',')}") List<String> unknownLocationIpAdresses,
+                         @Value("${support.email}") String from,
+                         @Value("${device-service.send-new-login-notification}") boolean sendNewLoginNotification,
+                         DeviceMetadataRepository deviceMetadataRepository,
                          DatabaseReader databaseReader,
                          Parser parser,
                          JavaMailSender mailSender,
                          MessageSource messages) {
+        this.unknownLocationIpAdresses = unknownLocationIpAdresses;
+        this.from = from;
+        this.sendNewLoginNotification = sendNewLoginNotification;
         this.deviceMetadataRepository = deviceMetadataRepository;
         this.databaseReader = databaseReader;
         this.parser = parser;
@@ -105,19 +123,17 @@ public class DeviceService {
     }
 
     private String getIpLocation(String ip) throws IOException, GeoIp2Exception {
-
         String location = UNKNOWN;
-
-        InetAddress ipAddress = InetAddress.getByName(ip);
-
-        CityResponse cityResponse = databaseReader.city(ipAddress);
-        if (Objects.nonNull(cityResponse) &&
+        boolean isIpWithUnknownLocation = CollectionUtils.isNotEmpty(unknownLocationIpAdresses) && unknownLocationIpAdresses.contains(ip);
+        if (!isIpWithUnknownLocation) {
+            InetAddress ipAddress = InetAddress.getByName(ip);
+            CityResponse cityResponse = databaseReader.city(ipAddress);
+            if (Objects.nonNull(cityResponse) &&
                 Objects.nonNull(cityResponse.getCity()) &&
                 !Strings.isNullOrEmpty(cityResponse.getCity().getName())) {
-
-            location = cityResponse.getCity().getName();
+                location = cityResponse.getCity().getName();
+            }
         }
-
         return location;
     }
 
@@ -136,6 +152,11 @@ public class DeviceService {
     }
 
     private void unknownDeviceNotification(String deviceDetails, String location, String ip, String email, Locale locale) {
+        if (!sendNewLoginNotification) {
+            LOGGER.info("Sending email notification on unknown device detection is off");
+            return;
+        }
+
         final String subject = "New Login Notification";
         final SimpleMailMessage notification = new SimpleMailMessage();
         notification.setTo(email);
