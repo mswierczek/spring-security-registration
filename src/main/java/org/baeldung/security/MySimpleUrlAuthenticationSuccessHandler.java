@@ -1,10 +1,10 @@
 package org.baeldung.security;
 
+import org.baeldung.persistence.dao.RoleRepository;
 import org.baeldung.persistence.model.User;
 import org.baeldung.service.DeviceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.web.DefaultRedirectStrategy;
@@ -17,19 +17,24 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 import java.io.IOException;
+import java.security.Principal;
 import java.util.Collection;
 
 @Component("myAuthenticationSuccessHandler")
 public class MySimpleUrlAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
+
     private final Logger logger = LoggerFactory.getLogger(getClass());
+
+    private final ActiveUserStore activeUserStore;
+
+    private final DeviceService deviceService;
 
     private RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
 
-    @Autowired
-    ActiveUserStore activeUserStore;
-
-    @Autowired
-    private DeviceService deviceService;
+    public MySimpleUrlAuthenticationSuccessHandler(ActiveUserStore activeUserStore, DeviceService deviceService) {
+        this.activeUserStore = activeUserStore;
+        this.deviceService = deviceService;
+    }
 
     @Override
     public void onAuthenticationSuccess(final HttpServletRequest request, final HttpServletResponse response, final Authentication authentication) throws IOException {
@@ -75,19 +80,16 @@ public class MySimpleUrlAuthenticationSuccessHandler implements AuthenticationSu
         redirectStrategy.sendRedirect(request, response, targetUrl);
     }
 
-    protected String determineTargetUrl(final Authentication authentication) {
-        boolean isUser = false;
-        boolean isAdmin = false;
-        final Collection<? extends GrantedAuthority> authorities = authentication.getAuthorities();
-        for (final GrantedAuthority grantedAuthority : authorities) {
-            if (grantedAuthority.getAuthority().equals("READ_PRIVILEGE")) {
-                isUser = true;
-            } else if (grantedAuthority.getAuthority().equals("WRITE_PRIVILEGE")) {
-                isAdmin = true;
-                isUser = false;
-                break;
-            }
-        }
+    private String determineTargetUrl(final Authentication authentication) {
+        // TODO maybe we can check if we should handle any scenario when authentication.getPrincipal() is not
+        //  an instance of User. If we don't need to, then instead of using authorities we could use
+        //  ((User) authentication.getPrincipal()).getRoles() and have some mappings between roles and pages for redirections
+        //  because keeping booleans below could be tricky when more roles appear
+        boolean isAdmin = authentication.getAuthorities().stream()
+            .anyMatch((GrantedAuthority authority) -> authority.getAuthority().equals(Privileges.WRITE_PRIVILEGE));
+        boolean isManager = !isAdmin && authentication.getAuthorities().stream()
+            .anyMatch((GrantedAuthority authority) -> authority.getAuthority().equals(Privileges.MANAGER_PRIVILEGE));
+        boolean isUser = !isManager && !isAdmin;
         if (isUser) {
         	 String username;
              if (authentication.getPrincipal() instanceof User) {
@@ -96,16 +98,17 @@ public class MySimpleUrlAuthenticationSuccessHandler implements AuthenticationSu
              else {
              	username = authentication.getName();
              }
-
             return "/homepage.html?user="+username;
         } else if (isAdmin) {
             return "/console.html";
+        } else if (isManager) {
+            return "/management.html";
         } else {
             throw new IllegalStateException();
         }
     }
 
-    protected void clearAuthenticationAttributes(final HttpServletRequest request) {
+    private void clearAuthenticationAttributes(final HttpServletRequest request) {
         final HttpSession session = request.getSession(false);
         if (session == null) {
             return;

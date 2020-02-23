@@ -37,19 +37,13 @@ public class User {
 
     private boolean isUsing2FA;
 
-    private String secret;
+    private String secret = Base32.random();;
 
     //
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "users_roles", joinColumns = @JoinColumn(name = "user_id", referencedColumnName = "id"), inverseJoinColumns = @JoinColumn(name = "role_id", referencedColumnName = "id"))
     private Collection<Role> roles;
-
-    public User() {
-        super();
-        this.secret = Base32.random();
-        this.enabled = false;
-    }
 
     public Long getId() {
         return id;
